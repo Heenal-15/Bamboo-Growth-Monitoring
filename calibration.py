@@ -7,7 +7,7 @@ import numpy as np
 from ultralytics import YOLO
 import json
 
-model = YOLO("best.pt")
+model = YOLO("model/yolo11n.pt")
 
 def get_scale(image_path, real_internode_cm, real_diameter_cm):
 
