@@ -62,6 +62,20 @@ heights_cm = [h * scale_internode for h in heights_px]
 diam_cm = [w * scale_diameter for w in widths_px]
 
 # -------------------------------
+# 🌱 BIOMASS ESTIMATION
+# -------------------------------
+k = 0.03  # empirical constant
+
+biomass = []
+
+for i in range(len(heights_cm)):
+    H = heights_cm[i]
+    D = diam_cm[i]
+
+    B = k * (D ** 2) * H
+    biomass.append(B)
+
+# -------------------------------
 # PRINT OUTPUT
 # -------------------------------
 data = []
@@ -70,11 +84,13 @@ for i in range(len(culms)):
     print(f"\n🌿 Culm {i+1}")
     print("Height (cm):", heights_cm[i])
     print("Diameter (cm):", diam_cm[i])
+    print("Biomass (kg):", biomass[i])
 
     data.append({
         "Culm_ID": i+1,
         "Height_cm": heights_cm[i],
-        "Diameter_cm": diam_cm[i]
+        "Diameter_cm": diam_cm[i],
+        "Biomass_kg": biomass[i]
     })
 
 df = pd.DataFrame(data)
@@ -94,8 +110,6 @@ for (x1, y1, x2, y2) in nodes:
 for i, (x1, y1, x2, y2) in enumerate(culms):
     cv2.putText(img_vis, f"Culm {i+1}", (x1, y1-5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
-    
-
 
 cv2.imwrite(output_path, img_vis)
 
