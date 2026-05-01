@@ -1,1 +1,15 @@
-.venv
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+
+# Generated outputs
+output/
+output.csv
+report.txt
+Bamboo_Report.pdf
+biomass_chart.png
+height_distribution.png
