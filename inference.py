@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from ultralytics import YOLO
 import json
+import os
 
 model = YOLO("model/yolo11n.pt")
 
@@ -25,6 +26,9 @@ print("Loaded scale factors")
 # Input image
 # -------------------------------
 image_path = "test_data/1.jpeg"
+base_name = os.path.splitext(os.path.basename(image_path))[0]
+output_path = f"output/{base_name}_output.jpg"
+
 image = cv2.imread(image_path)
 img_vis = image.copy()
 
@@ -93,6 +97,6 @@ for i, (x1, y1, x2, y2) in enumerate(culms):
     
 
 
-cv2.imwrite("output.jpg", img_vis)
+cv2.imwrite(output_path, img_vis)
 
 print("\n✅ Saved output image + CSV")
