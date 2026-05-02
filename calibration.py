@@ -1,74 +1,132 @@
 # ================================
-# 🌿 CALIBRATION (RUN ONCE ONLY)
+# 🌿 CALIBRATION
 # ================================
+# Run standalone (python calibration.py) to generate bamboo_scale.json,
+# OR import get_scale / run_calibration from app.py.
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 import json
+import os
 
-model = YOLO("model/yolo11n.pt")
 
-def get_scale(image_path, real_internode_cm, real_diameter_cm):
+# Default config — override by passing your own list to run_calibration()
+DEFAULT_CALIB_CONFIG = [
+    {"path": "calibration_images/calib1.jpeg", "internode_cm": 27,   "diameter_cm": 5.73},
+    {"path": "calibration_images/calib2.jpg",  "internode_cm": 25,   "diameter_cm": 6.69},
+]
 
+SCALE_CACHE = "bamboo_scale.json"
+
+
+# ─────────────────────────────────────────────────────────
+# CORE: derive scale factors from a single image
+# ─────────────────────────────────────────────────────────
+def get_scale(model, image_path: str, real_internode_cm: float, real_diameter_cm: float):
+    """
+    Given a calibration image (with known real-world internode length and
+    culm diameter), return (scale_internode, scale_diameter) in cm/px.
+
+    Parameters
+    ----------
+    model             : loaded YOLO model
+    image_path        : path to calibration image
+    real_internode_cm : measured internode length in centimetres
+    real_diameter_cm  : measured culm diameter in centimetres
+
+    Returns
+    -------
+    (scale_internode, scale_diameter) or (None, None) if detection fails
+    """
     image = cv2.imread(image_path)
-    results = model(image)
+    if image is None:
+        print(f"⚠️  Could not read image: {image_path}")
+        return None, None
 
-    culms = []
-    nodes = []
+    results = model(image, verbose=False)
 
+    culms, nodes = [], []
     for r in results:
         for box in r.boxes:
-            cls = int(box.cls[0])
+            cls   = int(box.cls[0])
             label = model.names[cls]
-
             x1, y1, x2, y2 = map(int, box.xyxy[0])
-
             if label == "culm":
                 culms.append((x1, y1, x2, y2))
             elif label == "node":
                 nodes.append((x1, y1, x2, y2))
 
-    # ---------------- INTERNODE PIXELS ----------------
-    node_centers = [(y1 + y2)//2 for (_, y1, _, y2) in nodes]
-    node_centers.sort()
+    # ── Internode pixels ──────────────────────────────────
+    node_centers = sorted([(y1 + y2) // 2 for (_, y1, _, y2) in nodes])
+    internode_px = [node_centers[i] - node_centers[i - 1]
+                    for i in range(1, len(node_centers))]
 
-    internode_px = [
-        node_centers[i] - node_centers[i-1]
-        for i in range(1, len(node_centers))
-    ]
+    if not internode_px:
+        print(f"⚠️  No internode pairs found in: {image_path}")
+        return None, None
 
     mean_internode_px = np.mean(internode_px)
 
-    # ---------------- DIAMETER PIXELS ----------------
-    diam_px = [(x2 - x1) for (x1, y1, x2, y2) in culms]
+    # ── Diameter pixels ───────────────────────────────────
+    if not culms:
+        print(f"⚠️  No culms found in: {image_path}")
+        return None, None
+
+    diam_px      = [(x2 - x1) for (x1, _, x2, _) in culms]
     mean_diam_px = np.mean(diam_px)
 
-    # ---------------- SCALE FACTORS ----------------
     scale_internode = real_internode_cm / mean_internode_px
-    scale_diameter = real_diameter_cm / mean_diam_px
+    scale_diameter  = real_diameter_cm  / mean_diam_px
 
     return scale_internode, scale_diameter
 
 
-# 🔁 YOUR 2 CALIBRATION IMAGES
-scale1 = get_scale("calibration_images/calib1.jpeg", real_internode_cm=27, real_diameter_cm=5.73)
-scale2 = get_scale("calibration_images/calib2.jpg", real_internode_cm=25, real_diameter_cm=6.69)
+# ─────────────────────────────────────────────────────────
+# PIPELINE: average over multiple calibration images
+# ─────────────────────────────────────────────────────────
+def run_calibration(model, calib_config=None, save_path=SCALE_CACHE):
+    """
+    Run calibration over all images in calib_config, average the results,
+    persist to save_path, and return (internode_scale, diameter_scale).
 
-# average both images
-final_scale_internode = (scale1[0] + scale2[0]) / 2
-final_scale_diameter = (scale1[1] + scale2[1]) / 2
+    If save_path already exists it is overwritten.
+    """
+    if calib_config is None:
+        calib_config = DEFAULT_CALIB_CONFIG
 
-print("Final Scale Internode:", final_scale_internode)
-print("Final Scale Diameter:", final_scale_diameter)
+    si_list, sd_list = [], []
 
-# save model
-scale_data = {
-    "internode_scale": final_scale_internode,
-    "diameter_scale": final_scale_diameter
-}
+    for cfg in calib_config:
+        si, sd = get_scale(model, cfg["path"], cfg["internode_cm"], cfg["diameter_cm"])
+        if si is not None and sd is not None:
+            si_list.append(si)
+            sd_list.append(sd)
 
-with open("bamboo_scale.json", "w") as f:
-    json.dump(scale_data, f)
+    if not si_list:
+        raise RuntimeError("Calibration failed: no valid images could be processed.")
 
-print("✅ Calibration saved!")
+    final_internode = float(np.mean(si_list))
+    final_diameter  = float(np.mean(sd_list))
+
+    scale_data = {
+        "internode_scale": final_internode,
+        "diameter_scale":  final_diameter,
+    }
+
+    with open(save_path, "w") as f:
+        json.dump(scale_data, f, indent=2)
+
+    print(f"Final Scale Internode : {final_internode:.6f} cm/px")
+    print(f"Final Scale Diameter  : {final_diameter:.6f} cm/px")
+    print(f"✅ Calibration saved to {save_path}")
+
+    return final_internode, final_diameter
+
+
+# ─────────────────────────────────────────────────────────
+# STANDALONE ENTRY-POINT
+# ─────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    from ultralytics import YOLO
+    _model = YOLO("model/yolov8s_bamboo.pt")
+    run_calibration(_model)
