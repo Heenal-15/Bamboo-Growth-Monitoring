@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
-model = YOLO("model/yolo11n.pt")
+model = YOLO("model/yolov8s_bamboo.pt")
 
 # -------------------------------
 # LOAD CALIBRATION
