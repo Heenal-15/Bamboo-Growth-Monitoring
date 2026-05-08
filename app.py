@@ -22,8 +22,9 @@ from reportlab.lib.units import inch
 
 # ── Local modules ────────────────────────────────────────────
 from calibration import run_calibration, SCALE_CACHE, DEFAULT_CALIB_CONFIG
-from inference   import (analyse_image, chart_biomass, chart_height,
-                          chart_carbon, fig_to_bytes, CARBON_FACTOR)
+from inference   import (analyse_image, chart_biomass, chart_health,
+                          chart_height, chart_carbon, fig_to_bytes,
+                          CARBON_FACTOR, HEALTH_CONFIG)
 
 # ─────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -143,6 +144,40 @@ html, body, [class*="css"] { font-family: 'Lato', sans-serif; }
 .carbon-banner .co2-detail { font-size:13px; opacity:0.88; line-height:1.65; }
 .carbon-banner .co2-detail strong { color:#a5d6a7; }
 
+/* ── Health Legend ── */
+.health-legend {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    margin: 12px 0 20px;
+}
+.health-badge {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 20px;
+    font-size: 13px; font-weight: 600;
+    border: 1.5px solid rgba(0,0,0,0.12);
+}
+.health-badge .dot {
+    width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+}
+.health-green  { background: #e8f5e9; color: #1b5e20; }
+.health-yellow { background: #fffde7; color: #f57f17; }
+.health-dry    { background: #fbe9e7; color: #bf360c; }
+
+/* ── Calibration Audit Card ── */
+.calib-card {
+    background: #f0f8e8;
+    border: 1.5px solid rgba(90,138,56,0.3);
+    border-radius: 14px; padding: 18px 22px;
+    margin-bottom: 20px; font-size: 13px;
+    color: #2d4a20; line-height: 1.7;
+}
+.calib-card h4 {
+    font-family: 'Playfair Display', serif;
+    font-size: 16px; color: #1a2410;
+    margin: 0 0 10px;
+}
+.calib-ok   { color: #2e7d32; font-weight: 700; }
+.calib-warn { color: #e65100; font-weight: 700; }
+
 /* ── Info Cards (sidebar) ── */
 .info-card {
     background: #f0f8e8;
@@ -191,14 +226,23 @@ with st.sidebar:
     </div>
     <div class="info-card">
         <b>Biomass Formula</b><br>
-        <code>B = K × D² × H</code><br>
-        K = 0.03 · D = diameter (cm) · H = height (cm)
+        <code>B = K × D² × H × health_factor</code><br>
+        K = 0.03 · D = diameter (cm) · H = height (cm)<br>
+        Health factor: Green=1.0 · Yellow=0.65 · Dry=0.35
     </div>
     <div class="info-card">
         <b>Carbon Sequestration</b><br>
         Bamboo sequesters ≈ <b>0.25 kg CO₂ per kg</b> of dry biomass
         (INBAR TR-37 / IPCC Tier 1).<br>
-        <code>CO₂ = Biomass × 0.25</code>
+        Dry culms receive an additional carbon penalty (factor 0.20)
+        as decomposition has already released sequestered carbon.<br>
+        <code>CO₂ = Biomass × CARBON_FACTOR × c_factor</code>
+    </div>
+    <div class="info-card">
+        <b>Health Classification (HSV)</b><br>
+        🟢 <b>Green</b>  — healthy, full biomass (100%)<br>
+        🟡 <b>Yellow</b> — stressed / transitional (65%)<br>
+        🔴 <b>Dry</b>    — dead or dry culm (35% biomass, 20% carbon)
     </div>
     <div class="info-card">
         <b>Detection Model</b><br>
@@ -214,7 +258,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     st.markdown("---")
-    st.caption("BambooSense v2.0 · YOLOv8 · Streamlit")
+    st.caption("BambooSense v3.0 · YOLOv8 · Health-Aware Biomass · Streamlit")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -243,6 +287,50 @@ def get_scale_factors():
     return si, sd
 
 
+def audit_calibration(scale_i: float, scale_d: float) -> dict:
+    """
+    Sanity-check the calibration scale factors against expected real-world ranges.
+
+    Typical bamboo field photography (1–3 m distance, phone/DSLR):
+      internode scale : 0.02 – 0.30 cm/px  (internode 15–45 cm, height ~100–500 px)
+      diameter  scale : 0.01 – 0.20 cm/px  (diameter  3–12 cm,  width  ~30–300 px)
+
+    Returns a dict with 'ok' bool and 'messages' list.
+    """
+    warnings = []
+    ok = True
+
+    if not (0.02 <= scale_i <= 0.30):
+        warnings.append(
+            f"⚠️  internode_scale {scale_i:.5f} cm/px is outside the expected range "
+            f"[0.02, 0.30]. Check calibration image distance or real-world measurements."
+        )
+        ok = False
+    else:
+        warnings.append(f"✅  internode_scale {scale_i:.5f} cm/px — within normal range.")
+
+    if not (0.01 <= scale_d <= 0.20):
+        warnings.append(
+            f"⚠️  diameter_scale {scale_d:.5f} cm/px is outside the expected range "
+            f"[0.01, 0.20]. Verify diameter measurements or image resolution."
+        )
+        ok = False
+    else:
+        warnings.append(f"✅  diameter_scale {scale_d:.5f} cm/px — within normal range.")
+
+    ratio = scale_i / scale_d if scale_d > 0 else 0
+    if not (0.5 <= ratio <= 8.0):
+        warnings.append(
+            f"⚠️  Scale ratio (internode/diameter) = {ratio:.2f} is unusual "
+            f"(expected 0.5–8.0). Both scales may be using inconsistent reference images."
+        )
+        ok = False
+    else:
+        warnings.append(f"✅  Scale ratio (internode/diameter) = {ratio:.2f} — looks consistent.")
+
+    return {"ok": ok, "messages": warnings}
+
+
 # ─────────────────────────────────────────────────────────────
 # PDF BUILDER
 # ─────────────────────────────────────────────────────────────
@@ -262,20 +350,26 @@ def build_pdf(df: pd.DataFrame, chart_dict: dict) -> bytes:
 
     total_co2 = df["Carbon_CO2_kg"].sum()
 
+    # Health breakdown
+    health_counts = df["Health"].value_counts().to_dict()
+    health_str = " · ".join(f"{h}: {n}" for h, n in health_counts.items())
+
     items = [
         Paragraph("BambooSense — Growth Monitoring Report", T),
         Paragraph("Automated Culm Detection · Biomass Estimation · Carbon Assessment", S),
         Spacer(1, 6),
         Paragraph(f"Images Processed : <b>{df['Image'].nunique()}</b>", B),
         Paragraph(f"Culms Detected   : <b>{len(df)}</b>", B),
-        Paragraph(f"Total Biomass    : <b>{df['Biomass_kg'].sum():.3f} kg</b>", B),
+        Paragraph(f"Culm Health      : <b>{health_str}</b>", B),
+        Paragraph(f"Total Biomass    : <b>{df['Biomass_kg'].sum():.3f} kg</b> "
+                  f"(health-corrected)", B),
         Paragraph(f"Avg Height       : <b>{df['Height_cm'].mean():.2f} cm</b>", B),
         Paragraph(f"Avg Diameter     : <b>{df['Diameter_cm'].mean():.2f} cm</b>", B),
         Spacer(1, 8),
         Paragraph(f"🌍  Total CO₂ Sequestered: <b>{total_co2:.3f} kg</b>  "
                   f"({total_co2/1000:.4f} tonne)", BC),
         Paragraph(f"Carbon factor: {CARBON_FACTOR} kg CO₂ / kg biomass  "
-                  f"(INBAR TR-37 / IPCC Tier 1)", S),
+                  f"(INBAR TR-37 / IPCC Tier 1) — adjusted for dry/stressed culms", S),
         Spacer(1, 14),
     ]
 
@@ -286,21 +380,32 @@ def build_pdf(df: pd.DataFrame, chart_dict: dict) -> bytes:
             Spacer(1, 10),
         ]
 
-    cols  = ["Image", "Culm", "Height_cm", "Diameter_cm", "Biomass_kg", "Carbon_CO2_kg"]
+    cols  = ["Image", "Culm", "Health", "Height_cm", "Diameter_cm",
+             "Biomass_kg", "Carbon_CO2_kg"]
     tdata = [cols] + [[str(row[c]) for c in cols] for _, row in df.iterrows()]
     tbl   = Table(tdata, repeatRows=1)
-    tbl.setStyle(TableStyle([
+
+    # Row colour-code by health
+    row_styles = [
         ('BACKGROUND',    (0, 0), (-1,  0), colors.HexColor('#3a5a28')),
         ('TEXTCOLOR',     (0, 0), (-1,  0), colors.white),
         ('FONTNAME',      (0, 0), (-1,  0), 'Helvetica-Bold'),
         ('FONTSIZE',      (0, 0), (-1, -1), 8),
-        ('ROWBACKGROUNDS',(0, 1), (-1, -1),
-         [colors.HexColor('#f0f8e8'), colors.white]),
         ('GRID',          (0, 0), (-1, -1), 0.4, colors.HexColor('#c8e0a8')),
         ('ALIGN',         (2, 0), (-1, -1), 'CENTER'),
-        # Highlight carbon column
-        ('BACKGROUND',    (5, 0), (5, -1), colors.HexColor('#e8f5e9')),
-    ]))
+        ('BACKGROUND',    (6, 0), (6, -1), colors.HexColor('#e8f5e9')),  # carbon col
+    ]
+    health_row_colors = {
+        "Green":  '#e8f5e9',
+        "Yellow": '#fffde7',
+        "Dry":    '#fbe9e7',
+    }
+    for row_i, (_, row) in enumerate(df.iterrows(), start=1):
+        bg = health_row_colors.get(row["Health"], '#ffffff')
+        row_styles.append(('BACKGROUND', (2, row_i), (2, row_i),
+                            colors.HexColor(bg)))
+
+    tbl.setStyle(TableStyle(row_styles))
     items += [Paragraph("Detailed Measurements", S), tbl]
     doc.build(items)
     return buf.getvalue()
@@ -318,9 +423,83 @@ st.markdown("""
     and sequestering 2–3× more CO₂ than equivalent tree plantations.
     BambooSense uses computer vision to provide scalable, field-ready measurement
     for forest management, biomass estimation, and climate impact reporting.
+    <br><br>
+    <b style="color:#8ab868">New:</b> Culms are now classified as
+    🟢 Green · 🟡 Yellow · 🔴 Dry — biomass and carbon values are automatically
+    corrected for culm health status.
   </p>
 </div>
 """, unsafe_allow_html=True)
+
+
+# ═════════════════════════════════════════════════════════════
+# CALIBRATION AUDIT
+# ═════════════════════════════════════════════════════════════
+with st.expander("🔧 Calibration Audit", expanded=False):
+    scale_i, scale_d = get_scale_factors()
+    audit = audit_calibration(scale_i, scale_d)
+
+    status_icon = "✅ Calibration looks correct" if audit["ok"] else "⚠️ Calibration may have issues"
+    status_cls  = "calib-ok" if audit["ok"] else "calib-warn"
+
+    msgs_html = "".join(
+        f"<div style='margin:4px 0'>{m}</div>" for m in audit["messages"]
+    )
+
+    st.markdown(f"""
+    <div class="calib-card">
+      <h4>📐 Scale Factor Audit</h4>
+      <span class="{status_cls}">{status_icon}</span>
+      <br><br>
+      {msgs_html}
+      <br>
+      <b>internode_scale</b> = {scale_i:.6f} cm/px &nbsp;·&nbsp;
+      <b>diameter_scale</b>  = {scale_d:.6f} cm/px
+      <br><br>
+      <small>
+        <b>How calibration works:</b> The model detects nodes in calibration images.
+        Adjacent node-centre Y-positions give internode pixel height;
+        culm bounding-box width gives diameter pixels.
+        Scale = real_cm / mean_px. If your calibration images were taken from different
+        distances or with different zoom levels than your field images, re-run calibration
+        with matching conditions.
+      </small>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not audit["ok"]:
+        st.warning("Re-run calibration with images taken at the same distance and zoom "
+                   "as your field images, and double-check your real-world measurements.")
+
+
+# ═════════════════════════════════════════════════════════════
+# HEALTH LEGEND
+# ═════════════════════════════════════════════════════════════
+st.markdown('<div class="section-title">🌿 Culm Health Classification</div>',
+            unsafe_allow_html=True)
+st.markdown("""
+<div class="health-legend">
+  <div class="health-badge health-green">
+    <div class="dot" style="background:#34A853"></div>
+    🟢 <b>Green</b> — Healthy · Biomass ×1.00 · Carbon ×1.00
+  </div>
+  <div class="health-badge health-yellow">
+    <div class="dot" style="background:#DCBC00"></div>
+    🟡 <b>Yellow</b> — Stressed · Biomass ×0.65 · Carbon ×0.65
+  </div>
+  <div class="health-badge health-dry">
+    <div class="dot" style="background:#D04020"></div>
+    🔴 <b>Dry/Dead</b> — Biomass ×0.35 · Carbon ×0.20
+  </div>
+</div>
+<p style="font-size:12px;color:#6a8a5a;margin-top:4px">
+  Classification uses HSV colour-space analysis of each culm's bounding-box region.
+  Dry bamboo has significantly lower moisture content and its sequestered carbon is
+  actively being released through decomposition — hence the steeper carbon penalty.
+</p>
+""", unsafe_allow_html=True)
+
+st.markdown("---")
 
 
 # ═════════════════════════════════════════════════════════════
@@ -383,6 +562,12 @@ if run and uploaded:
     total_biomass = df["Biomass_kg"].sum()
     total_carbon  = df["Carbon_CO2_kg"].sum()
 
+    # Health counts for summary pills
+    health_counts = df["Health"].value_counts().to_dict()
+    n_green  = health_counts.get("Green",  0)
+    n_yellow = health_counts.get("Yellow", 0)
+    n_dry    = health_counts.get("Dry",    0)
+
     # ── STAT PILLS ────────────────────────────────────────
     st.markdown(f"""
     <div class="stats-row">
@@ -396,6 +581,21 @@ if run and uploaded:
         <div class="stat-val">{len(df)}</div>
         <div class="stat-lbl">Culms Detected</div>
       </div>
+      <div class="stat-pill" style="border-color:rgba(52,168,83,0.4)">
+        <div class="stat-icon">🟢</div>
+        <div class="stat-val" style="color:#2e7d32">{n_green}</div>
+        <div class="stat-lbl">Green Culms</div>
+      </div>
+      <div class="stat-pill" style="border-color:rgba(220,188,0,0.4)">
+        <div class="stat-icon">🟡</div>
+        <div class="stat-val" style="color:#f57f17">{n_yellow}</div>
+        <div class="stat-lbl">Yellow Culms</div>
+      </div>
+      <div class="stat-pill" style="border-color:rgba(208,64,32,0.4)">
+        <div class="stat-icon">🔴</div>
+        <div class="stat-val" style="color:#bf360c">{n_dry}</div>
+        <div class="stat-lbl">Dry Culms</div>
+      </div>
       <div class="stat-pill">
         <div class="stat-icon">📏</div>
         <div class="stat-val">{df['Height_cm'].mean():.1f}</div>
@@ -404,27 +604,31 @@ if run and uploaded:
       <div class="stat-pill">
         <div class="stat-icon">⚖️</div>
         <div class="stat-val">{total_biomass:.2f}</div>
-        <div class="stat-lbl">Total Biomass (kg)</div>
+        <div class="stat-lbl">Total Biomass (kg)*</div>
       </div>
       <div class="stat-pill">
         <div class="stat-icon">🌍</div>
         <div class="stat-val carbon">{total_carbon:.2f}</div>
-        <div class="stat-lbl">CO₂ Sequestered (kg)</div>
+        <div class="stat-lbl">CO₂ Sequestered (kg)*</div>
       </div>
     </div>
+    <p style="font-size:11px;color:#8aaa78;margin:-10px 0 16px">
+      * Values are health-corrected: dry and stressed culms contribute less biomass and carbon.
+    </p>
     """, unsafe_allow_html=True)
 
     # ── CARBON HIGHLIGHT BANNER ───────────────────────────
-    trees_equiv = total_carbon / 21.77   # avg tree absorbs ~21.77 kg CO₂/yr
+    trees_equiv = total_carbon / 21.77
     st.markdown(f"""
     <div class="carbon-banner">
       <div style="font-size:42px">🌍</div>
       <div>
         <div class="co2-num">{total_carbon:.2f} <span style="font-size:22px;font-weight:400">kg CO₂</span></div>
         <div class="co2-detail">
-          Carbon sequestered by this bamboo stand ·
+          Carbon sequestered by this bamboo stand (health-adjusted) ·
           <strong>≈ {trees_equiv:.1f} trees</strong> worth of annual absorption<br>
-          Method: INBAR Technical Report 37 · Factor = {CARBON_FACTOR} kg CO₂ / kg dry biomass
+          Method: INBAR Technical Report 37 · Base factor = {CARBON_FACTOR} kg CO₂ / kg dry biomass ·
+          Dry culm penalty applied (×0.20 carbon factor)
         </div>
       </div>
     </div>
@@ -435,6 +639,7 @@ if run and uploaded:
     # ── ANNOTATED IMAGES ──────────────────────────────────
     st.markdown('<div class="section-title">🖼️ Detection Results</div>',
                 unsafe_allow_html=True)
+    st.caption("Bounding-box colours: 🟢 Green = healthy · 🟡 Yellow = stressed · 🔴 Dry = dead/dry · 🟠 Orange = node")
     img_cols = st.columns(min(len(annotated), 3))
     for i, (name, (img, n_nodes)) in enumerate(annotated.items()):
         with img_cols[i % 3]:
@@ -448,22 +653,35 @@ if run and uploaded:
     st.markdown('<div class="section-title">📊 Analytics</div>',
                 unsafe_allow_html=True)
 
-    f_bio  = chart_biomass(df)
-    f_hgt  = chart_height(df)
-    f_co2  = chart_carbon(df)
+    f_bio    = chart_biomass(df)
+    f_health = chart_health(df)
+    f_hgt    = chart_height(df)
+    f_co2    = chart_carbon(df)
 
-    c1, c2, c3 = st.columns(3)
-    with c1: st.pyplot(f_bio, use_container_width=True)
-    with c2: st.pyplot(f_hgt, use_container_width=True)
-    with c3: st.pyplot(f_co2, use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1: st.pyplot(f_bio,    use_container_width=True)
+    with c2: st.pyplot(f_health, use_container_width=True)
+
+    c3, c4 = st.columns(2)
+    with c3: st.pyplot(f_hgt, use_container_width=True)
+    with c4: st.pyplot(f_co2, use_container_width=True)
 
     st.markdown("---")
 
     # ── DATA TABLE ────────────────────────────────────────
     st.markdown('<div class="section-title">📋 Measurement Data</div>',
                 unsafe_allow_html=True)
-    st.dataframe(
+
+    def _health_row_color(val):
+        return {
+            "Green":  "background-color: #e8f5e9",
+            "Yellow": "background-color: #fffde7",
+            "Dry":    "background-color: #fbe9e7",
+        }.get(val, "")
+
+    styled = (
         df.style
+          .applymap(_health_row_color, subset=["Health"])
           .format({
               "Height_cm":     "{:.2f}",
               "Diameter_cm":   "{:.2f}",
@@ -471,10 +689,10 @@ if run and uploaded:
               "Carbon_CO2_kg": "{:.3f}",
           })
           .background_gradient(subset=["Biomass_kg"],    cmap="YlGn")
-          .background_gradient(subset=["Carbon_CO2_kg"], cmap="Greens"),
-        use_container_width=True,
-        height=min(420, 55 + len(df) * 35),
+          .background_gradient(subset=["Carbon_CO2_kg"], cmap="Greens")
     )
+    st.dataframe(styled, use_container_width=True,
+                 height=min(420, 55 + len(df) * 35))
 
     st.markdown("---")
 
@@ -482,31 +700,36 @@ if run and uploaded:
     st.markdown('<div class="section-title">⬇️ Export Results</div>',
                 unsafe_allow_html=True)
 
-    b_bio  = fig_to_bytes(f_bio)
-    b_hgt  = fig_to_bytes(f_hgt)
-    b_co2  = fig_to_bytes(f_co2)
-    b_csv  = df.to_csv(index=False).encode()
-    b_pdf  = build_pdf(df, {
-        "Biomass per Image":       b_bio,
-        "Culm Height Distribution":b_hgt,
-        "CO₂ Sequestered":         b_co2,
+    b_bio    = fig_to_bytes(f_bio)
+    b_health = fig_to_bytes(f_health)
+    b_hgt    = fig_to_bytes(f_hgt)
+    b_co2    = fig_to_bytes(f_co2)
+    b_csv    = df.to_csv(index=False).encode()
+    b_pdf    = build_pdf(df, {
+        "Biomass per Image (health-corrected)": b_bio,
+        "Biomass by Health Status":             b_health,
+        "Culm Height Distribution":             b_hgt,
+        "CO₂ Sequestered (health-adjusted)":    b_co2,
     })
 
-    d1, d2, d3, d4, d5 = st.columns(5)
+    d1, d2, d3, d4, d5, d6 = st.columns(6)
     with d1:
-        st.download_button("📄 CSV Data",      b_csv, "bamboo_data.csv",
-                           "text/csv",        use_container_width=True)
+        st.download_button("📄 CSV Data",      b_csv,    "bamboo_data.csv",
+                           "text/csv",         use_container_width=True)
     with d2:
-        st.download_button("📑 PDF Report",    b_pdf, "BambooSense_Report.pdf",
-                           "application/pdf", use_container_width=True)
+        st.download_button("📑 PDF Report",    b_pdf,    "BambooSense_Report.pdf",
+                           "application/pdf",  use_container_width=True)
     with d3:
-        st.download_button("📊 Biomass Chart", b_bio, "biomass_chart.png",
-                           "image/png",       use_container_width=True)
+        st.download_button("📊 Biomass Chart", b_bio,    "biomass_chart.png",
+                           "image/png",        use_container_width=True)
     with d4:
-        st.download_button("📈 Height Dist.",  b_hgt, "height_distribution.png",
-                           "image/png",       use_container_width=True)
+        st.download_button("🌿 Health Chart",  b_health, "health_chart.png",
+                           "image/png",        use_container_width=True)
     with d5:
-        st.download_button("🌍 CO₂ Chart",     b_co2, "carbon_chart.png",
-                           "image/png",       use_container_width=True)
+        st.download_button("📈 Height Dist.",  b_hgt,    "height_distribution.png",
+                           "image/png",        use_container_width=True)
+    with d6:
+        st.download_button("🌍 CO₂ Chart",     b_co2,    "carbon_chart.png",
+                           "image/png",        use_container_width=True)
 
     plt.close('all')

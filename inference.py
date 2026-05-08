@@ -29,6 +29,69 @@ CARBON_FACTOR = 0.25      # kg CO₂ per kg of dry bamboo biomass
 
 
 # ─────────────────────────────────────────────────────────
+# 🌿 BAMBOO HEALTH CLASSIFICATION
+# ─────────────────────────────────────────────────────────
+# Dry/dead bamboo has significantly lower effective biomass for carbon accounting:
+#   - Dry bamboo loses 30–50% moisture content (moisture = ~50% of fresh biomass)
+#   - Dead bamboo has already released much of its sequestered carbon through
+#     decomposition, making it carbon-neutral or a net emitter over time.
+#
+# We classify each culm by its dominant hue using the HSV colour space:
+#   GREEN  → healthy, full biomass + carbon credit  (factor 1.0)
+#   YELLOW → transitional / stressed bamboo         (factor 0.65)
+#   BROWN/DRY → dry or dead culm                    (factor 0.35)
+#
+# References:
+#   Buckingham et al. 2011, "Bamboo as a source of affordable steel substitute"
+#   INBAR Policy Synthesis Report (2014) — Bamboo carbon sequestration
+
+HEALTH_CONFIG = {
+    # label : (biomass_factor, carbon_factor, display_colour_bgr, hex)
+    "Green":  (1.00, 1.00, (52,  168,  83), "#34A853"),
+    "Yellow": (0.65, 0.65, (0,   200, 220), "#DCBC00"),   # BGR for cv2
+    "Dry":    (0.35, 0.20, (70,  100, 210), "#D04020"),
+}
+
+# HSV hue ranges (0–180 in OpenCV) — evaluated on the ROI inside each culm bbox
+_HSV_RANGES = {
+    "Green":  [(35,  85)],          # green hues
+    "Yellow": [(20,  34), (86, 95)],# yellow-green / yellow-brown bridge
+    "Dry":    [(0,   19), (96, 180)],# red/brown/grey (wraps around 0)
+}
+
+
+def _classify_culm_health(img_bgr: np.ndarray, x1: int, y1: int,
+                           x2: int, y2: int) -> str:
+    """
+    Classify a culm ROI as 'Green', 'Yellow', or 'Dry' using HSV hue
+    distribution.  Returns the dominant health label.
+    """
+    roi = img_bgr[y1:y2, x1:x2]
+    if roi.size == 0:
+        return "Green"
+
+    hsv  = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    hue  = hsv[:, :, 0].flatten()                # 0–180
+    sat  = hsv[:, :, 1].flatten()                # 0–255
+    val  = hsv[:, :, 2].flatten()                # 0–255
+
+    # Ignore very dark (shadow) or very desaturated (overexposed) pixels
+    mask = (sat > 30) & (val > 50)
+    if mask.sum() < 50:
+        return "Dry"  # very grey/dark → treat as dry
+
+    hue = hue[mask]
+    total = len(hue)
+
+    counts = {}
+    for label, ranges in _HSV_RANGES.items():
+        n = sum(int(((hue >= lo) & (hue <= hi)).sum()) for lo, hi in ranges)
+        counts[label] = n / total
+
+    return max(counts, key=counts.get)
+
+
+# ─────────────────────────────────────────────────────────
 # CORE: analyse a single PIL image
 # ─────────────────────────────────────────────────────────
 def analyse_image(model, pil_img, scale_internode: float, scale_diameter: float,
@@ -72,29 +135,59 @@ def analyse_image(model, pil_img, scale_internode: float, scale_diameter: float,
     for i, (x1, y1, x2, y2) in enumerate(culms):
         h_cm   = (y2 - y1) * scale_internode
         d_cm   = (x2 - x1) * scale_diameter
-        bm_kg  = BIOMASS_K * (d_cm ** 2) * h_cm
-        co2_kg = bm_kg * CARBON_FACTOR
+
+        # ── Health classification ─────────────────────────
+        health = _classify_culm_health(img_bgr, x1, y1, x2, y2)
+        bm_factor, c_factor, box_color_bgr, box_hex = HEALTH_CONFIG[health]
+
+        # Dry culms have lower effective biomass — apply correction
+        bm_kg  = BIOMASS_K * (d_cm ** 2) * h_cm * bm_factor
+        co2_kg = bm_kg * CARBON_FACTOR * c_factor
 
         rows.append({
-            "Culm":        i + 1,
-            "Height_cm":   round(h_cm,   2),
-            "Diameter_cm": round(d_cm,   2),
-            "Biomass_kg":  round(bm_kg,  3),
+            "Culm":          i + 1,
+            "Health":        health,
+            "Height_cm":     round(h_cm,   2),
+            "Diameter_cm":   round(d_cm,   2),
+            "Biomass_kg":    round(bm_kg,  3),
             "Carbon_CO2_kg": round(co2_kg, 3),
         })
 
-        # ── Draw culm box ──────────────────────────────
-        cv2.rectangle(vis, (x1, y1), (x2, y2), (52, 168, 83), 2)
-        cv2.putText(vis,
-                    f"#{i+1}  H:{h_cm:.0f}cm  B:{bm_kg:.2f}kg  C:{co2_kg:.2f}kg",
-                    (x1, max(y1 - 8, 12)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (52, 168, 83), 2)
+        # ── Draw culm box (colour-coded by health) ────────
+        cv2.rectangle(vis, (x1, y1), (x2, y2), box_color_bgr, 2)
+
+        # Health badge background
+        badge_label = f"#{i+1} [{health}]  H:{h_cm:.0f}cm  B:{bm_kg:.2f}kg  C:{co2_kg:.2f}kg"
+        (tw, th), _ = cv2.getTextSize(badge_label, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+        badge_y = max(y1 - 8, 14)
+        cv2.rectangle(vis,
+                      (x1, badge_y - th - 4),
+                      (x1 + tw + 6, badge_y + 2),
+                      box_color_bgr, -1)
+        cv2.putText(vis, badge_label,
+                    (x1 + 3, badge_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1,
+                    cv2.LINE_AA)
 
     # ── Draw node boxes ────────────────────────────────
     for j, (x1, y1, x2, y2) in enumerate(nodes):
         cv2.rectangle(vis, (x1, y1), (x2, y2), (255, 165, 0), 2)
         cv2.putText(vis, f"N{j+1}", (x1, max(y1 - 6, 12)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 165, 0), 1)
+
+    # ── Legend overlay ─────────────────────────────────
+    legend_items = [
+        ("Green  — healthy (100% biomass)",  (52, 168, 83)),
+        ("Yellow — stressed (65% biomass)",  (0, 200, 220)),
+        ("Dry    — dead/dry (35% biomass)",  (70, 100, 210)),
+        ("Orange — node",                    (255, 165, 0)),
+    ]
+    lx, ly = 10, 10
+    for txt, col in legend_items:
+        cv2.rectangle(vis, (lx, ly), (lx + 16, ly + 16), col, -1)
+        cv2.putText(vis, txt, (lx + 22, ly + 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+        ly += 22
 
     ann_img = Image.fromarray(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
     return rows, ann_img, len(nodes)
@@ -131,7 +224,10 @@ def run_batch_inference(model, scale_internode: float, scale_diameter: float,
         all_data.extend(rows)
 
         ann_img.save(output_path)
-        print(f"  {image_name}: {len(rows)} culms, {n_nodes} nodes")
+        health_summary = {}
+        for r in rows:
+            health_summary[r["Health"]] = health_summary.get(r["Health"], 0) + 1
+        print(f"  {image_name}: {len(rows)} culms {health_summary}, {n_nodes} nodes")
 
     df = pd.DataFrame(all_data)
     return df
@@ -141,6 +237,12 @@ def run_batch_inference(model, scale_internode: float, scale_diameter: float,
 # CHART HELPERS  (used by app.py and standalone run)
 # ─────────────────────────────────────────────────────────
 GREEN_PALETTE = ['#3a5a28', '#5a8a38', '#8ab868', '#c8e0a8', '#1a2410']
+
+HEALTH_COLORS = {
+    "Green":  "#34A853",
+    "Yellow": "#DCBC00",
+    "Dry":    "#D04020",
+}
 
 
 def _base_fig(w=7, h=3.5):
@@ -163,9 +265,34 @@ def chart_biomass(df: pd.DataFrame):
         ax.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.005,
                 f"{b.get_height():.2f}", ha='center', va='bottom',
                 fontsize=9, color='#3a5a28', fontweight='bold')
-    ax.set_title("Biomass per Image (kg)", fontsize=13,
+    ax.set_title("Biomass per Image (kg)\n[corrected for culm health]",
+                 fontsize=12, fontweight='bold', color='#1a2410', pad=12)
+    ax.set_ylabel("Biomass (kg)", color='#5a8a38', fontsize=10)
+    ax.tick_params(axis='x', rotation=15)
+    plt.tight_layout()
+    return fig
+
+
+def chart_health(df: pd.DataFrame):
+    """Stacked bar: biomass contribution by health category per image."""
+    fig, ax = _base_fig(w=7, h=3.5)
+    images = df["Image"].unique()
+    bottoms = np.zeros(len(images))
+
+    for health, color in HEALTH_COLORS.items():
+        vals = []
+        for img in images:
+            sub = df[(df["Image"] == img) & (df["Health"] == health)]
+            vals.append(sub["Biomass_kg"].sum())
+        vals = np.array(vals)
+        bars = ax.bar(images, vals, bottom=bottoms,
+                      color=color, label=health, edgecolor='none', width=0.55, alpha=0.9)
+        bottoms += vals
+
+    ax.set_title("Biomass by Culm Health Status", fontsize=12,
                  fontweight='bold', color='#1a2410', pad=12)
     ax.set_ylabel("Biomass (kg)", color='#5a8a38', fontsize=10)
+    ax.legend(title="Health", fontsize=9, title_fontsize=9)
     ax.tick_params(axis='x', rotation=15)
     plt.tight_layout()
     return fig
@@ -173,11 +300,12 @@ def chart_biomass(df: pd.DataFrame):
 
 def chart_height(df: pd.DataFrame):
     fig, ax = _base_fig()
+    # Colour histogram bars by dominant health if single-image, else use green
     ax.hist(df["Height_cm"], bins=max(5, len(df) // 2),
             color='#5a8a38', edgecolor='#eef6e4', linewidth=0.5, alpha=0.9)
     ax.axvline(df["Height_cm"].mean(), color='#d4a843', linestyle='--',
                linewidth=1.5, label=f'Mean: {df["Height_cm"].mean():.1f} cm')
-    ax.set_title("Culm Height Distribution", fontsize=13,
+    ax.set_title("Culm Height Distribution", fontsize=12,
                  fontweight='bold', color='#1a2410', pad=12)
     ax.set_xlabel("Height (cm)", color='#5a8a38', fontsize=10)
     ax.set_ylabel("Count",       color='#5a8a38', fontsize=10)
@@ -196,8 +324,8 @@ def chart_carbon(df: pd.DataFrame):
         ax.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.001,
                 f"{b.get_height():.3f}", ha='center', va='bottom',
                 fontsize=9, color='#1b5e20', fontweight='bold')
-    ax.set_title("CO₂ Sequestered per Image (kg)", fontsize=13,
-                 fontweight='bold', color='#1a2410', pad=12)
+    ax.set_title("CO₂ Sequestered per Image (kg)\n[adjusted for dry/stressed culms]",
+                 fontsize=12, fontweight='bold', color='#1a2410', pad=12)
     ax.set_ylabel("CO₂ (kg)", color='#5a8a38', fontsize=10)
     ax.tick_params(axis='x', rotation=15)
     plt.tight_layout()
@@ -233,8 +361,11 @@ if __name__ == "__main__":
     df.to_csv("output.csv", index=False)
     print("\n✅ CSV saved → output.csv")
     print(df.groupby("Image")[["Biomass_kg", "Carbon_CO2_kg"]].sum())
+    print("\nHealth breakdown:")
+    print(df.groupby(["Image", "Health"])[["Biomass_kg", "Carbon_CO2_kg"]].sum())
 
     chart_biomass(df).savefig("biomass_chart.png")
+    chart_health(df).savefig("health_chart.png")
     chart_height(df).savefig("height_distribution.png")
     chart_carbon(df).savefig("carbon_chart.png")
     print("📊 Charts saved")
