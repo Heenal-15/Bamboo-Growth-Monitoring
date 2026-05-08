@@ -1,7 +1,7 @@
 # ================================
 # 🌿 INFERENCE  — BambooSense v4.0
 # ================================
-# Palette (from brand swatches):
+# Palette :
 #   Cream      #E8DEBB   background / parchment
 #   Khaki      #9B8C60   aged / neutral
 #   Sage       #A3B86A   yellow-green / transitional culms
@@ -41,17 +41,12 @@ C_LIGHT  = "#F5F2E8"      # near-white warm background
 # 🌿 BAMBOO HEALTH CLASSIFICATION  — HSV + Saturation-aware
 # ─────────────────────────────────────────────────────────
 #
-# KEY IMPROVEMENT  — yellow vs dry disambiguation:
-#
 #   The critical problem:  a *yellow* bamboo culm has a warm hue (≈20-34 in
 #   OpenCV HSV 0-180 space) AND moderate-to-good saturation (≥60).
 #   A *dry/dead* culm is also brownish/yellowish but with LOW saturation
 #   (the colour has "washed out" to tan or grey-brown).
 #
-#   Old logic used hue alone → yellow culms with hue 20-34 were pooled with
-#   the "Dry" bucket whenever saturation happened to be moderate.
-#
-#   New logic:
+#   logic:
 #     1. Mask out very dark + very desaturated pixels (background/shadow).
 #     2. Compute per-label hue-match fractions AS BEFORE.
 #     3. Apply a saturation tiebreaker:
@@ -120,7 +115,7 @@ def _classify_culm_health(img_bgr: np.ndarray,
 
     dominant = max(fracs, key=fracs.get)
 
-    # ── Saturation tiebreaker ──────────────────────────────────
+    # ── Saturation ──────────────────────────────────
     if dominant == "Yellow":
         # yellow hue + vivid saturation  → stressed (Yellow)
         # yellow hue + washed-out sat    → Dry  (khaki/tan bamboo)
@@ -476,7 +471,7 @@ if __name__ == "__main__":
     )
 
     df.to_csv("output.csv", index=False)
-    print("\n✅ CSV saved → output.csv")
+    print("\n CSV saved → output.csv")
     print(df.groupby("Image")[["Biomass_kg", "Carbon_CO2_kg"]].sum())
     print("\nHealth breakdown:")
     print(df.groupby(["Image", "Health"])[["Biomass_kg", "Carbon_CO2_kg"]].sum())
@@ -486,5 +481,5 @@ if __name__ == "__main__":
     chart_height(df).savefig("height_distribution.png")
     chart_carbon(df).savefig("carbon_chart.png")
     chart_health_donut(df).savefig("health_donut.png")
-    print("📊 Charts saved")
+    print("Charts saved")
     plt.close('all')

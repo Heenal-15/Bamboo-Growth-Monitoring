@@ -325,7 +325,7 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown("---")
-    st.caption("BambooSense v4.0 · Anthropic Claude · Streamlit")
+    st.caption("BambooSense v4.0 · Streamlit")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -438,7 +438,7 @@ def build_pdf(df: pd.DataFrame, chart_dict: dict) -> bytes:
          "Total Culms",      str(len(df))],
         ["Health Breakdown", health_str,
          "Avg Height",       f"{df['Height_cm'].mean():.2f} cm"],
-        ["Total Biomass",    f"{total_biomass:.3f} kg (health-corrected)",
+        ["Total Biomass",    f"{total_biomass:.3f} kg",
          "Avg Diameter",     f"{df['Diameter_cm'].mean():.2f} cm"],
     ]
     summary_tbl = Table(summary_data, colWidths=[1.2*inch, 2.5*inch, 1.2*inch, 2.5*inch])
@@ -576,10 +576,7 @@ st.markdown("""
     BambooSense uses computer vision to provide scalable, field-ready measurement
     for forest management, biomass estimation, and climate impact reporting.
     <br><br>
-    Culms are classified as 🟢 <b style="color:#A3B86A">Green</b> ·
-    🟡 <b style="color:#A3B86A">Yellow</b> · 🔴 <b style="color:#A3B86A">Dry</b>
-    using HSV colour-space analysis with saturation tiebreaking — yellow culms
-    (vivid hue) are no longer misclassified as Dry.
+  
   </p>
   <div class="sdg-row">
     <span class="sdg-badge">🌍 SDG 13 · Climate Action</span>
@@ -588,34 +585,6 @@ st.markdown("""
   </div>
 </div>
 """, unsafe_allow_html=True)
-
-
-# ═════════════════════════════════════════════════════════════
-# CALIBRATION AUDIT
-# ═════════════════════════════════════════════════════════════
-with st.expander("🔧 Calibration Audit", expanded=False):
-    scale_i, scale_d = get_scale_factors()
-    audit = audit_calibration(scale_i, scale_d)
-    status_icon = "✅ Calibration looks correct" if audit["ok"] else "⚠️ Calibration may have issues"
-    status_cls  = "calib-ok" if audit["ok"] else "calib-warn"
-    msgs_html = "".join(f"<div style='margin:4px 0'>{m}</div>" for m in audit["messages"])
-    st.markdown(f"""
-    <div class="calib-card">
-      <h4>📐 Scale Factor Audit</h4>
-      <span class="{status_cls}">{status_icon}</span>
-      <br><br>{msgs_html}<br>
-      <b>internode_scale</b> = {scale_i:.6f} cm/px &nbsp;·&nbsp;
-      <b>diameter_scale</b> = {scale_d:.6f} cm/px
-      <br><br>
-      <small>
-        Scale = real_cm / mean_px derived from calibration images.
-        If your field images differ in distance or zoom, re-run calibration.
-      </small>
-    </div>
-    """, unsafe_allow_html=True)
-    if not audit["ok"]:
-        st.warning("Re-run calibration with images taken at the same distance and zoom "
-                   "as your field images.")
 
 
 # ═════════════════════════════════════════════════════════════
@@ -638,11 +607,7 @@ st.markdown("""
     🔴 <b>Dry / Dead</b> — Biomass ×0.35 · Carbon ×0.20
   </div>
 </div>
-<p style="font-size:12px;color:#9B8C60;margin-top:2px;line-height:1.65">
-  Classification uses HSV hue analysis <em>plus</em> a saturation tiebreaker:
-  vivid yellow hues (sat ≥ 70) → <b>Yellow</b> (stressed), washed-out tan/khaki hues (sat &lt; 50) → <b>Dry</b>.
-  This prevents warm-yellow culms from being misclassified as dead.
-</p>
+
 <hr class="section-rule">
 """, unsafe_allow_html=True)
 
@@ -755,7 +720,7 @@ if run and uploaded:
       </div>
     </div>
     <p style="font-size:11px;color:#9B8C60;margin:-6px 0 14px">
-      * Health-corrected: dry/stressed culms contribute reduced biomass and carbon.
+       dry/stressed culms contribute reduced biomass and carbon.
     </p>
     """, unsafe_allow_html=True)
 
@@ -860,10 +825,10 @@ if run and uploaded:
     b_donut  = fig_to_bytes(f_donut,  dpi=180)
     b_csv    = df.to_csv(index=False).encode()
     b_pdf    = build_pdf(df, {
-        "Biomass per Image (health-corrected)": b_bio,
+        "Biomass per Image": b_bio,
         "Biomass by Health Status":             b_health,
         "Culm Height Distribution":             b_hgt,
-        "CO₂ Sequestered (health-adjusted)":    b_co2,
+        "CO₂ Sequestered":    b_co2,
     })
 
     d1, d2, d3, d4, d5, d6, d7 = st.columns(7)
