@@ -64,10 +64,9 @@ C_LIGHT  = "#F5F2E8"      # near-white warm background
 #     C_ORANGE (#D45A10) → hue ≈ 13   → Dry bucket  ✔
 
 HEALTH_CONFIG = {
-    # label : (biomass_factor, carbon_factor, box_color_bgr, hex_color)
-    "Green":  (1.00, 1.00, (30,  122,  77),  C_FOREST),   # forest green
-    "Yellow": (0.65, 0.65, (106, 184, 163),  C_SAGE),     # sage (BGR≈A3B86A)
-    "Dry":    (0.35, 0.20, (16,  90,  212),  C_ORANGE),   # burnt orange (BGR)
+    "Healthy":  (1.00, 1.00, (30, 122, 77), C_FOREST),
+    "Stressed": (0.65, 0.65, (106, 184, 163), C_SAGE),
+    "Degraded": (0.35, 0.20, (16, 90, 212), C_ORANGE),
 }
 
 # HSV hue ranges  (0–180 in OpenCV)
@@ -86,22 +85,22 @@ def _classify_culm_health(img_bgr: np.ndarray,
                            x1: int, y1: int,
                            x2: int, y2: int) -> str:
     """
-    Classify a culm ROI as 'Green', 'Yellow', or 'Dry' using
-    HSV hue distribution + saturation tiebreaker.
+    Returns HEALTH STATUS (not color labels):
+    Healthy / Stressed / Degraded
     """
+
     roi = img_bgr[y1:y2, x1:x2]
     if roi.size == 0:
-        return "Green"
+        return "Degraded"
 
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    hue = hsv[:, :, 0].flatten().astype(float)   # 0–180
-    sat = hsv[:, :, 1].flatten().astype(float)   # 0–255
-    val = hsv[:, :, 2].flatten().astype(float)   # 0–255
+    hue = hsv[:, :, 0].flatten().astype(float)
+    sat = hsv[:, :, 1].flatten().astype(float)
+    val = hsv[:, :, 2].flatten().astype(float)
 
-    # Ignore shadow / blown-out pixels
     mask = (sat > 25) & (val > 45) & (val < 245)
     if mask.sum() < 40:
-        return "Dry"   # very grey / dark → treat as dry
+        return "Degraded"
 
     hue_m = hue[mask]
     sat_m = sat[mask]
@@ -109,36 +108,32 @@ def _classify_culm_health(img_bgr: np.ndarray,
 
     total = len(hue_m)
     fracs = {}
+
     for label, ranges in _HSV_RANGES.items():
-        n = sum(int(((hue_m >= lo) & (hue_m <= hi)).sum()) for lo, hi in ranges)
+        n = sum(((hue_m >= lo) & (hue_m <= hi)).sum() for lo, hi in ranges)
         fracs[label] = n / total
 
     dominant = max(fracs, key=fracs.get)
 
-    # ── Saturation ──────────────────────────────────
-    if dominant == "Yellow":
-        # yellow hue + vivid saturation  → stressed (Yellow)
-        # yellow hue + washed-out sat    → Dry  (khaki/tan bamboo)
-        if mean_sat < _SAT_WASHED_OUT:
-            return "Dry"
-        return "Yellow"
+    # ── Mapping to HEALTH STATUS ─────────────────────
 
     if dominant == "Green":
-        # very pale/faded green → Dry
         if mean_sat < _SAT_WASHED_OUT - 10:
-            return "Dry"
-        # sage-like saturation range → Yellow (transitional)
-        if mean_sat < _SAT_VIVID and fracs["Yellow"] > 0.25:
-            return "Yellow"
-        return "Green"
+            return "Degraded"
+        if mean_sat < _SAT_VIVID:
+            return "Stressed"
+        return "Healthy"
 
-    # dominant == "Dry" (brown/orange hues)
+    if dominant == "Yellow":
+        if mean_sat < _SAT_WASHED_OUT:
+            return "Degraded"
+        return "Stressed"
+
+    # dominant == "Dry"
     if mean_sat >= _SAT_VIVID:
-        # vivid brown-orange is still "stressed Yellow", not dead
-        return "Yellow"
-    return "Dry"
+        return "Stressed"
 
-
+    return "Degraded"
 # ─────────────────────────────────────────────────────────
 # CORE: analyse a single PIL image
 # ─────────────────────────────────────────────────────────
@@ -186,37 +181,41 @@ def analyse_image(model, pil_img, scale_internode: float, scale_diameter: float,
         })
 
         # ── Draw culm bounding box ──────────────────────────
-        cv2.rectangle(vis, (x1, y1), (x2, y2), box_color_bgr, 2)
+        overlay = vis.copy()
 
-        badge = f"#{i+1} [{health}]  H:{h_cm:.0f}cm  B:{bm_kg:.2f}kg  C:{co2_kg:.2f}kg"
-        (tw, th), _ = cv2.getTextSize(badge, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
-        badge_y = max(y1 - 8, 14)
-        cv2.rectangle(vis,
-                      (x1, badge_y - th - 4), (x1 + tw + 6, badge_y + 2),
-                      box_color_bgr, -1)
-        cv2.putText(vis, badge, (x1 + 3, badge_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+        # Soft transparent fill
+        cv2.rectangle(
+            overlay,
+            (x1, y1),
+            (x2, y2),
+            box_color_bgr,
+            -1
+        )
+
+        # Slightly stronger visibility
+        alpha = 0.14
+        vis = cv2.addWeighted(overlay, alpha, vis, 1 - alpha, 0)
+
+        # Darker/thicker outer bbox
+        dark_box = tuple(max(c - 40, 0) for c in box_color_bgr)
+
+        cv2.rectangle(
+            vis,
+            (x1, y1),
+            (x2, y2),
+            dark_box,
+            3
+        )
+
+       
 
     # ── Node boxes ─────────────────────────────────────────
     node_color = (16, 90, 212)   # burnt orange in BGR
     for j, (x1, y1, x2, y2) in enumerate(nodes):
         cv2.rectangle(vis, (x1, y1), (x2, y2), node_color, 2)
-        cv2.putText(vis, f"N{j+1}", (x1, max(y1 - 6, 12)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, node_color, 1)
+        
 
-    # ── Legend overlay ──────────────────────────────────────
-    legend_items = [
-        ("Green  — healthy (100% biomass)",  HEALTH_CONFIG["Green"][2]),
-        ("Yellow — stressed (65% biomass)",  HEALTH_CONFIG["Yellow"][2]),
-        ("Dry    — dead/dry (35% biomass)",  HEALTH_CONFIG["Dry"][2]),
-        ("Node   — internode joint",         node_color),
-    ]
-    lx, ly = 10, 10
-    for txt, col in legend_items:
-        cv2.rectangle(vis, (lx, ly), (lx + 16, ly + 16), col, -1)
-        cv2.putText(vis, txt, (lx + 22, ly + 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
-        ly += 22
+    
 
     ann_img = Image.fromarray(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
     return rows, ann_img, len(nodes)
@@ -255,9 +254,9 @@ def run_batch_inference(model, scale_internode: float, scale_diameter: float,
 # CHART HELPERS
 # ─────────────────────────────────────────────────────────
 HEALTH_COLORS = {
-    "Green":  C_FOREST,
-    "Yellow": C_SAGE,
-    "Dry":    C_ORANGE,
+    "Healthy": C_FOREST,
+    "Stressed": C_SAGE,
+    "Degraded": C_ORANGE,
 }
 
 # Custom green-to-orange gradient colormap for sequential data
@@ -291,14 +290,6 @@ def _base_fig(w=7.5, h=4.0, title=""):
     return fig, ax
 
 
-def _add_sdg_badges(ax):
-    """Add tiny SDG badge labels inside the plot area."""
-    ax.annotate("🌍 SDG 13: Climate Action  |  🌿 SDG 15: Life on Land",
-                xy=(0.01, 0.97), xycoords="axes fraction",
-                fontsize=7, color=C_KHAKI, va="top",
-                fontfamily="monospace")
-
-
 def chart_biomass(df: pd.DataFrame):
     fig, ax = _base_fig(w=7.5, h=4.2)
     totals = df.groupby("Image")["Biomass_kg"].sum()
@@ -316,7 +307,7 @@ def chart_biomass(df: pd.DataFrame):
                  fontsize=13, fontweight='bold', color=C_DARK, pad=14,
                  fontfamily="serif")
     ax.set_ylabel("Biomass (kg)", fontsize=10)
-    _add_sdg_badges(ax)
+   
     plt.tight_layout()
     return fig
 
@@ -327,7 +318,7 @@ def chart_health(df: pd.DataFrame):
     images  = df["Image"].unique()
     n       = len(images)
     bottoms = np.zeros(n)
-    for health in ["Green", "Yellow", "Dry"]:
+    for health in ["Healthy", "Stressed", "Degraded"]:
         vals = np.array([
             df[(df["Image"] == img) & (df["Health"] == health)]["Biomass_kg"].sum()
             for img in images
@@ -354,7 +345,7 @@ def chart_health(df: pd.DataFrame):
                     loc="upper right", framealpha=0.85,
                     facecolor=C_CREAM, edgecolor=C_KHAKI)
     leg.get_title().set_color(C_DARK)
-    _add_sdg_badges(ax)
+    
     plt.tight_layout()
     return fig
 
@@ -377,7 +368,7 @@ def chart_height(df: pd.DataFrame):
     ax.set_xlabel("Height (cm)", fontsize=10)
     ax.set_ylabel("Count",       fontsize=10)
     leg = ax.legend(fontsize=9, facecolor=C_CREAM, edgecolor=C_KHAKI)
-    _add_sdg_badges(ax)
+    
     plt.tight_layout()
     return fig
 
@@ -401,7 +392,6 @@ def chart_carbon(df: pd.DataFrame):
                  fontsize=13, fontweight='bold', color=C_DARK, pad=14,
                  fontfamily="serif")
     ax.set_ylabel("CO₂ (kg)", fontsize=10)
-    _add_sdg_badges(ax)
     plt.tight_layout()
     return fig
 

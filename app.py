@@ -594,15 +594,15 @@ st.markdown("""
 <div class="health-legend">
   <div class="health-badge hb-green">
     <div class="dot" style="background:#4D7A1E"></div>
-    🟢 <b>Green</b> — Healthy · Biomass ×1.00 · Carbon ×1.00
+    <b>Green</b> — Healthy · Biomass ×1.00 · Carbon ×1.00
   </div>
   <div class="health-badge hb-yellow">
     <div class="dot" style="background:#A3B86A"></div>
-    🟡 <b>Yellow</b> — Stressed · Biomass ×0.65 · Carbon ×0.65
+    <b>Yellow</b> — Stressed · Biomass ×0.65 · Carbon ×0.65
   </div>
   <div class="health-badge hb-dry">
     <div class="dot" style="background:#D45A10"></div>
-    🔴 <b>Dry / Dead</b> — Biomass ×0.35 · Carbon ×0.20
+    <b>Dry / Dead</b> — Biomass ×0.35 · Carbon ×0.20
   </div>
 </div>
 
@@ -748,12 +748,18 @@ if run and uploaded:
     # ── ANNOTATED IMAGES ──────────────────────────────────────
     st.markdown('<div class="section-title">🖼️ Detection Results</div>',
                 unsafe_allow_html=True)
-    st.caption("Box colours: 🟢 Forest green = healthy · 🟡 Sage green = stressed/yellow · 🔴 Burnt orange = dry/dead · Orange border = node")
+
+   
 
     img_cols = st.columns(min(len(annotated), 3))
+
     for i, (name, (img, n_nodes)) in enumerate(annotated.items()):
         with img_cols[i % 3]:
-            st.image(img, caption=f"{name}  ·  {n_nodes} node(s)", use_container_width=True)
+            st.image(
+                img,
+                caption=f"{name}  ·  {n_nodes} node(s)",
+                use_container_width=True
+            )
 
     st.markdown('<hr class="section-rule">', unsafe_allow_html=True)
 
