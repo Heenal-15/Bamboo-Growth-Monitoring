@@ -312,7 +312,7 @@ def chart_biomass(df: pd.DataFrame):
         ax.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.003,
                 f"{b.get_height():.2f} kg",
                 ha='center', va='bottom', fontsize=9, color=C_DARK, fontweight='bold')
-    ax.set_title("Biomass per Image  (health-corrected)",
+    ax.set_title("Biomass per Image",
                  fontsize=13, fontweight='bold', color=C_DARK, pad=14,
                  fontfamily="serif")
     ax.set_ylabel("Biomass (kg)", fontsize=10)
@@ -397,7 +397,7 @@ def chart_carbon(df: pd.DataFrame):
         ax.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.0005,
                 f"{b.get_height():.3f} kg",
                 ha='center', va='bottom', fontsize=9, color=C_DARK, fontweight='bold')
-    ax.set_title("CO₂ Sequestered per Image  (health-adjusted)",
+    ax.set_title("CO₂ Sequestered per Image",
                  fontsize=13, fontweight='bold', color=C_DARK, pad=14,
                  fontfamily="serif")
     ax.set_ylabel("CO₂ (kg)", fontsize=10)

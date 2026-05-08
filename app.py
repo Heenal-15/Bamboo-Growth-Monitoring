@@ -306,9 +306,7 @@ with st.sidebar:
         🟢 <b>Green</b>  — healthy, full biomass (100%)<br>
         🟡 <b>Yellow</b> — stressed / transitional (65%)<br>
         🔴 <b>Dry</b>    — dead/dry (35% biomass, 20% carbon)<br><br>
-        <small>Yellow vs Dry now uses hue <em>and</em> saturation —
-        vivid yellow-hued culms classify as Yellow, washed-out tan/khaki
-        culms classify as Dry.</small>
+        
     </div>
     <div class="info-card">
         <b>Detection Model</b><br>
