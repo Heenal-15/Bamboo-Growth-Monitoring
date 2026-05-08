@@ -218,7 +218,7 @@ def analyse_image(model, pil_img, scale_internode: float, scale_diameter: float,
     
 
     ann_img = Image.fromarray(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
-    return rows, ann_img, len(nodes)
+    return rows, ann_img, len(culms)
 
 
 # ─────────────────────────────────────────────────────────

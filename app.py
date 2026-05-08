@@ -669,9 +669,9 @@ if run and uploaded:
     total_biomass = df["Biomass_kg"].sum()
     total_carbon  = df["Carbon_CO2_kg"].sum()
     health_counts = df["Health"].value_counts().to_dict()
-    n_green  = health_counts.get("Green",  0)
-    n_yellow = health_counts.get("Yellow", 0)
-    n_dry    = health_counts.get("Dry",    0)
+    n_green  = health_counts.get("Healthy", 0)
+    n_yellow = health_counts.get("Stressed", 0)
+    n_dry    = health_counts.get("Degraded", 0)
 
     # ── STAT PILLS ────────────────────────────────────────────
     st.markdown(f"""
