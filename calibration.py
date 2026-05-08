@@ -118,7 +118,7 @@ def run_calibration(model, calib_config=None, save_path=SCALE_CACHE):
 
     print(f"Final Scale Internode : {final_internode:.6f} cm/px")
     print(f"Final Scale Diameter  : {final_diameter:.6f} cm/px")
-    print(f"✅ Calibration saved to {save_path}")
+    print(f"Calibration saved to {save_path}")
 
     return final_internode, final_diameter
 
