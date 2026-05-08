@@ -1,7 +1,0 @@
-Bamboo Growth Report
-
-Total Culms: 4
-Avg Height: 205.08146870810054
-Avg Diameter: 6.306178999144569
-Total Biomass: 992.4829191365344
-Biomass Density: 0.0008076846672660599
