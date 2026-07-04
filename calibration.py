@@ -128,5 +128,6 @@ def run_calibration(model, calib_config=None, save_path=SCALE_CACHE):
 # ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
     from ultralytics import YOLO
-    _model = YOLO("model/yolov8s_bamboo.pt")
+    #_model = YOLO("model/yolov8s_bamboo.pt")
+    _model = YOLO("model/yolo11n_bamboo.pt")
     run_calibration(_model)

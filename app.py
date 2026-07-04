@@ -332,7 +332,8 @@ with st.sidebar:
 @st.cache_resource(show_spinner=False)
 def load_model():
     from ultralytics import YOLO
-    return YOLO("model/yolov8s_bamboo.pt")
+    #return YOLO("model/yolov8s_bamboo.pt")
+    return YOLO("model/yolo11n_bamboo.pt")
 
 
 @st.cache_data(show_spinner=False)

@@ -451,7 +451,8 @@ if __name__ == "__main__":
     with open(SCALE_CACHE) as f:
         scale = json.load(f)
 
-    _model = YOLO("model/yolov8s_bamboo.pt")
+    #_model = YOLO("model/yolov8s_bamboo.pt")
+    _model = YOLO("model/yolo11n_bamboo.pt")
     print("Loaded scale factors:", scale)
 
     df = run_batch_inference(
